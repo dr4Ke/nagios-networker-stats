@@ -1,0 +1,162 @@
+#!/bin/bash
+#
+# Nagios plugin to retrieve EMC Networker Statistics
+#
+# Author:  Christophe Drevet-Droguet <cdrevet@atac.fr>
+# Date:    17/12/2014
+# Version: 1.0
+#
+# License:
+#    check_networker_statistics get networker server simple statistics
+#    Copyright (C) 2014  Christophe Drevet-Droguet
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+PROG=$(basename "$0")
+NSRADMIN="/usr/sbin/nsradmin"
+NWSERVER="$1"
+INTERVAL="300"
+DATAFILE="/tmp/${PROG}_${NWSERVER}.dat"
+LOCKFILE="/tmp/${PROG}_${NWSERVER}.lock"
+
+function usage () {
+    echo "${PROG} SERVER"
+    exit 2
+}
+
+function get_nsradmin_values () {
+    "${NSRADMIN}" -s "${NWSERVER}" <<EOF
+show statistics
+print type:NSR
+EOF
+}
+
+function trim () {
+    local _var="$*"
+    _var="${_var#"${_var%%[![:space:]]*}"}"   # remove leading whitespace characters
+    _var="${_var%"${_var##*[![:space:]]}"}"   # remove trailing whitespace characters
+    echo -n "$_var"
+}
+
+function var_name () {
+    local _name="$1"
+    echo -n "${_name}" | tr "a-z " "A-Z_"
+}
+
+if [ -z "${NWSERVER}" ]; then
+    usage
+fi
+
+start_parsing="false"
+while read _line; do
+    if [ "${start_parsing}" = "false" ]; then
+        echo "${_line}" | grep "statistics:" >/dev/null || continue
+        start_parsing="true"
+        _line=$(echo "${_line}" | sed -r 's/.*statistics: //')
+        TIMESTAMP_NEW=$(date +%s)
+    fi
+    echo "${_line}" | grep "^nsradmin>" >/dev/null && break
+    #echo "LINE: ${_line}"
+    IFS=",;" read -ra VALS <<< "${_line}"
+    for _pair in "${VALS[@]}"; do
+        IFS='=' read _key _val <<< "${_pair}"
+        _key=$(trim "${_key}")
+        _val=$(trim "${_val}")
+        _var="$(var_name "${_key}")_NEW"
+        eval "${_var}=${_val}"
+        #echo "${_var}=${_val}"
+    done
+done < <(get_nsradmin_values)
+
+if [ -r "${DATAFILE}" ]; then
+    . "${DATAFILE}"
+    #echo "TIMESTAMP=${TIMESTAMP}"
+    #echo "SAVES=${SAVES}"
+    #echo "RECOVERS=${RECOVERS}"
+    #echo "SAVE_KB=${SAVE_KB}"
+    #echo "RECOVER_KB=${RECOVER_KB}"
+    _interval=$((TIMESTAMP_NEW - TIMESTAMP))
+    _new_saves=$((SAVES_NEW - SAVES))
+    _new_recovers=$((RECOVERS_NEW - RECOVERS))
+    _new_save_kb=$((SAVE_KB_NEW - SAVE_KB))
+    _new_recover_kb=$((RECOVER_KB_NEW - RECOVER_KB))
+    #echo "Interval: ${_interval}"
+    #echo "New saves: ${_new_saves}"
+    #echo "New recovers: ${_new_recovers}"
+    #echo "New save KiB: ${_new_save_kb}"
+    #echo "New recover KiB: ${_new_recover_kb}"
+    #echo "Current save sessions: ${CURRENT_SAVES_NEW}"
+    #echo "Current recover sessions: ${CURRENT_RECOVERS_NEW}"
+    #echo "Bad save sessions: ${BAD_SAVES_NEW}"
+    #echo "Bad recover sessions: ${BAD_RECOVERS_NEW}"
+    _save_kb_per_interval=$((_new_save_kb * INTERVAL / _interval))
+    _recover_kb_per_interval=$((_new_recover_kb * INTERVAL / _interval))
+    #echo "Saved KiB per ${INTERVAL}s: ${_save_kb_per_interval}"
+    #echo "Recovered KiB per ${INTERVAL}s: ${_recover_kb_per_interval}"
+    _save_kb_per_second=$((_new_save_kb / _interval))
+    _recover_kb_per_second=$((_new_recover_kb / _interval))
+    _save_mb_per_second=$((_save_kb_per_second / 1024))
+    _recover_mb_per_second=$((_recover_kb_per_second / 1024))
+    #echo "Saved KiB per second: ${_save_kb_per_second}"
+    #echo "Recovered KiB per second: ${_recover_kb_per_second}"
+fi
+
+if [ -z "${SAVES_NEW}" ]; then
+    # Error while querying networker
+    echo -n "UNKNOWN - "
+    _status=3
+elif [ "${BAD_SAVES_NEW}" != "0" ]; then
+    # Some save error
+    echo -n "CRITICAL - Bad saves: ${BAD_SAVES_NEW}, "
+    _status=2
+elif [ "${BAD_RECOVERS_NEW}" != "0" ]; then
+    # Some recover error
+    echo -n "CRITICAL - Bad recovers: ${BAD_RECOVERS_NEW}, "
+    _status=2
+else
+    # No error
+    echo -n "OK - "
+    _status=0
+fi
+
+if [ "${_status}" != "3" -a -r "${DATAFILE}" ]; then
+    # Statistics to display
+    echo -n "Last check: $((${_interval} / 60)) min. ago, "
+    echo -n "New saves: ${_new_saves}, " 
+    echo -n "New recovers: ${_new_recovers}, " 
+    echo -n "Average saved MiB per second: ${_save_mb_per_second}, "
+    echo -n "Average recovered MiB per second: ${_recover_mb_per_second}, "
+    echo -n "Current save sessions: ${CURRENT_SAVES_NEW}, "
+    echo -n "Current recover sessions: ${CURRENT_RECOVERS_NEW}"
+    
+    # Statistics for performance graph
+    echo -n "|saved_per_sec=${_save_mb_per_second}MB;;;;"
+    echo -n " recovered_per_sec=${_recover_mb_per_second}MB;;;;"
+    echo -n " new_saves=${_new_saves};;;;"
+    echo -n " new_recovers=${_new_recovers};;;;"
+    echo -n " current_saves=${CURRENT_SAVES_NEW};;;;"
+    echo -n " current_recovers=${CURRENT_RECOVERS_NEW};;;;"
+    echo -n " last_check=${_interval}s;;;;"
+fi
+
+# Save stats for next check
+echo "TIMESTAMP=${TIMESTAMP_NEW}"    > "${DATAFILE}"
+echo "SAVES=${SAVES_NEW}"           >> "${DATAFILE}"
+echo "RECOVERS=${RECOVERS_NEW}"     >> "${DATAFILE}"
+echo "SAVE_KB=${SAVE_KB_NEW}"       >> "${DATAFILE}"
+echo "RECOVER_KB=${RECOVER_KB_NEW}" >> "${DATAFILE}"
+
+echo ""
+exit ${_status}
