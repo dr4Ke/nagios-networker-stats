@@ -1,0 +1,31 @@
+Purpose
+=======
+
+check_networker_statistics gets simple statistics from a networker server into nagios performance graph data.
+
+It exits with CRITICAL state if the `bad saves` or `bad restores` counter is not zero.
+
+
+Details
+=======
+
+This script uses `/usr/sbin/nsradmin` from the networker client, installed, and running on the nagios host.
+
+The query used is:
+
+    nsradmin> show statistics
+    nsradmin> print type:NSR
+
+
+Configuration
+=============
+
+The local account, used for running nagios plugins, must be authorized to access the networker server data. Just add NAGIOS_USER@NAGIOS_HOST to a networker group that has "Monitor NetWorker" access.
+
+
+Usage
+=====
+
+This script don't accept any argument except the hostname or IP address of the networker server to monitor:
+
+    check_networker_statistics NETWORKER_SERVER
