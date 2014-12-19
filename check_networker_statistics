@@ -107,6 +107,8 @@ if [ -r "${DATAFILE}" ]; then
     #echo "Recovered KiB per ${INTERVAL}s: ${_recover_kb_per_interval}"
     _save_kb_per_second=$((_new_save_kb / _interval))
     _recover_kb_per_second=$((_new_recover_kb / _interval))
+    _save_b_per_second=$((_save_kb_per_second * 1024))
+    _recover_b_per_second=$((_recover_kb_per_second * 1024))
     _save_mb_per_second=$((_save_kb_per_second / 1024))
     _recover_mb_per_second=$((_recover_kb_per_second / 1024))
     #echo "Saved KiB per second: ${_save_kb_per_second}"
@@ -142,8 +144,8 @@ if [ "${_status}" != "3" -a -r "${DATAFILE}" ]; then
     echo -n "Current recover sessions: ${CURRENT_RECOVERS_NEW}"
     
     # Statistics for performance graph
-    echo -n "|saved_per_sec=${_save_mb_per_second}MB;;;;"
-    echo -n " recovered_per_sec=${_recover_mb_per_second}MB;;;;"
+    echo -n "|saved_per_sec=${_save_b_per_second}B;;;;"
+    echo -n " recovered_per_sec=${_recover_b_per_second}B;;;;"
     echo -n " new_saves=${_new_saves};;;;"
     echo -n " new_recovers=${_new_recovers};;;;"
     echo -n " current_saves=${CURRENT_SAVES_NEW};;;;"
